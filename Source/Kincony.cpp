@@ -101,6 +101,9 @@ PubSubClient client(espClient);
 //Sensor Objects
 //#define SHT31_ADDRESS_1 0x44
 SHT31 sht;
+unsigned long sht_failures = 0;
+unsigned long sht_calls = 0;
+
 U8G2_SSD1306_128X64_NONAME_F_SW_I2C u8g2(U8G2_R0, 5, 4, U8X8_PIN_NONE);
 EnergyMonitor emon1;
 ZMPT101B voltageSensor1(34, 60.0);
@@ -257,11 +260,20 @@ void setup() {
 	xTaskCreatePinnedToCore(
 			taskStatus						// Function to implement the task
 			,  "Read Environment Sensors"	// A name just for humans
-			,  6144  						// This stack size can be checked & adjusted by reading the Stack Highwater
+			,  4096  						// This stack size can be checked & adjusted by reading the Stack Highwater
 			,  NULL							// Task input parameter
-			,  1  							// Priority, with 3 (configMAX_PRIORITIES - 1) being the highest, and 0 being the lowest.
+			,  2  							// Priority, with 3 (configMAX_PRIORITIES - 1) being the highest, and 0 being the lowest.
 			,  NULL							// Task handle.
 			,  ARDUINO_DEFAULT_TASK_CORE);
+
+	xTaskCreatePinnedToCore(
+			taskUpdateDisplay				// Function to implement the task
+			,  "Update LCD Display"	  		// A name just for humans
+			,  2048  						// This stack size can be checked & adjusted by reading the Stack Highwater
+			,  NULL							// Task input parameter
+			,  2  							// Priority, with 3 (configMAX_PRIORITIES - 1) being the highest, and 0 being the lowest.
+			,  NULL							// Task handle.
+			,  ARDUINO_RUNNING_CORE);
 }
 
 //unsigned long lastMillis = 0L;
@@ -271,33 +283,6 @@ void loop() {
 	}
 
 	client.loop();
-
-	u8g2.firstPage();
-	do {
-		page1();
-	} while (u8g2.nextPage());
-//
-//	if (millis() - lastMillis >= 63000) {
-//		lastMillis = millis();
-//		if (sht.isConnected()) {
-//			sht.read();
-//			temperature = sht.getFahrenheit();
-//			humidity = sht.getHumidity();
-//
-//			int error = sht.getError();
-//			if (error != 0) {
-//				uint16_t stat = sht.readStatus();
-//				ESP_LOGW("kincony", "Temperature sensor Error status: 0x%04x, read status: 0x%04x",
-//						error, stat);
-//				logSHT31BitStatus(stat);
-//			}
-//		} else {
-//			int error = sht.getError();
-//			ESP_LOGE("kincony", "Temperature sensor connection failure, HARD resetting...");
-//			ESP_LOGW("kincony", "Temperature sensor Error status: 0x%04x", error);
-//			sht.reset(true);
-//		}
-//	}
 }
 
 //Periodic Task
@@ -380,19 +365,28 @@ void taskPowerReadings(void *pvParameters) {
 		//publish readings
 		publishPowerReadings();
 
-		// Delay 2+ second between loops.
-		vTaskDelay(2047 / portTICK_PERIOD_MS);
-
 		//testing only
 		ESP_LOGD("kincony", "taskPowerReadings High Water Mark: %d", uxTaskGetStackHighWaterMark(NULL));
+
+		// Delay 2+ second between loops.
+		vTaskDelay(2047 / portTICK_PERIOD_MS);
 	}
 }
 
 //Periodic Task
 void taskStatus(void *pvParameters) {
+	//Attempting to report status more frequently due to SHT31 read failures
+	// caused by conflict with LCD display on I2C
 	for (;;) {
+		sht_calls++;
+		if (sht_calls == 0) {
+			//handle rollover
+			sht_calls++;
+			sht_failures = 0;
+		}
+
 		if (sht.isConnected()) {
-			sht.read();
+			sht.read(false);
 			temperature = sht.getFahrenheit();
 			humidity = sht.getHumidity();
 
@@ -407,15 +401,34 @@ void taskStatus(void *pvParameters) {
 
 			publishStatus();
 		} else {
-			ESP_LOGE("kincony", "Temperature sensor connection failure, resetting...");
-			sht.reset(true);
+			sht_failures++;
+			ESP_LOGE("kincony", "Temperature sensor connection failure.");
+//			sht.reset(true);
 		}
-
-		// Delay 600+ second between loops.
-		vTaskDelay(600047 / portTICK_PERIOD_MS);
 
 		//testing only
 		ESP_LOGD("kincony", "taskStatus High Water Mark: %d", uxTaskGetStackHighWaterMark(NULL));
+
+		// Delay 35+ second between loops.
+//		vTaskDelay(600047 / portTICK_PERIOD_MS);
+		vTaskDelay(35047 / portTICK_PERIOD_MS);
+	}
+}
+
+//Periodic Task
+void taskUpdateDisplay(void *pvParameters) {
+	//Moved from loop() to own task to reduce conflict with SHT31 on I2C
+	for (;;) {
+		u8g2.firstPage();
+		do {
+			page1();
+		} while (u8g2.nextPage());
+
+		//testing only
+		ESP_LOGD("kincony", "taskUpdateDisplay High Water Mark: %d", uxTaskGetStackHighWaterMark(NULL));
+
+		// Delay 60+ second between loops.
+		vTaskDelay(60047 / portTICK_PERIOD_MS);
 	}
 }
 
@@ -460,36 +473,35 @@ void page1() {
 	u8g2.print(p_grid, 2);
 	u8g2.print("W");
 
-	//FIXME - SHT31 not working after first call
-//	u8g2.setCursor(0, 35);
-//	u8g2.print("Temp: ");
-//	u8g2.print(temperature);
-//	u8g2.print(" F");
-//
-//	u8g2.setCursor(0, 55);
-//	u8g2.print("Humidity: ");
-//	u8g2.print(humidity);
-//	u8g2.print(" %");
-
-	//FIXME remove when SHT31 working
-	short highSensor = 0;
-	float highWattage = 0.0;
-	for (short nCounter = 0 ; nCounter < 16 ; nCounter++) {
-		if ((nCounter != 9) && (nCounter != 11) && (nCounter != 15)) {
-			if (ctWatts[nCounter] > highWattage) {
-				highWattage = ctWatts[nCounter];
-				highSensor = nCounter;
-			}
-		}
-	}
 	u8g2.setCursor(0, 35);
-	u8g2.print("High Sensor Read:");
+	u8g2.print("Temp: ");
+	u8g2.print(temperature);
+	u8g2.print(" F");
 
 	u8g2.setCursor(0, 55);
-	u8g2.print(++highSensor);
-	u8g2.print(": ");
-	u8g2.print(highWattage, 2);
-	u8g2.print(" W");
+	u8g2.print("Humidity: ");
+	u8g2.print(humidity);
+	u8g2.print(" %");
+
+//	short highSensor = 0;
+//	float highWattage = 0.0;
+//	for (short nCounter = 0 ; nCounter < 16 ; nCounter++) {
+//		//ignore mains and sub sensors
+//		if ((nCounter != 9) && (nCounter != 11) && (nCounter != 15)) {
+//			if (ctWatts[nCounter] > highWattage) {
+//				highWattage = ctWatts[nCounter];
+//				highSensor = nCounter;
+//			}
+//		}
+//	}
+//	u8g2.setCursor(0, 35);
+//	u8g2.print("High Sensor Read:");
+//
+//	u8g2.setCursor(0, 55);
+//	u8g2.print(++highSensor);
+//	u8g2.print(": ");
+//	u8g2.print(highWattage, 2);
+//	u8g2.print(" W");
 }
 
 float measureCurrent(bool s0_state, bool s1_state, bool s2_state, bool s3_state) {
@@ -1028,7 +1040,8 @@ void publishStatus() {
 		 },
 		 "environment": {
 			"temp": 45.1,
-			"humidity": 60.3
+			"humidity": 60.3,
+			"failureRate": 0.056
 		 }
 	 }
 	 */
@@ -1055,6 +1068,11 @@ void publishStatus() {
 	JsonObject environment = doc["environment"].to<JsonObject>();
 	environment["temp"] = temperature;
 	environment["humidity"] = humidity;
+
+	//handle rollover
+	if (sht_calls > 0) {
+		environment["failureRate"] = sht_failures / (double)sht_calls;
+	}
 
 	doc.shrinkToFit();  // optional
 	//build string output
@@ -1453,13 +1471,13 @@ char* getLocalTime() {
 }
 
 void logSHT31BitStatus(uint16_t stat) {
-  ESP_LOGW("kincony", "SHT31 Checksum status %d\n", CHECK_BIT(stat,0));
-  ESP_LOGW("kincony", "SHT31 Last command status %d\n", CHECK_BIT(stat,1));
-  ESP_LOGW("kincony", "SHT31 Reset detected status %d\n", CHECK_BIT(stat,4));
-  ESP_LOGW("kincony", "SHT31 'T' tracking alert %d\n", CHECK_BIT(stat,10));
-  ESP_LOGW("kincony", "SHT31 'RH' tracking alert %d\n", CHECK_BIT(stat,11));
-  ESP_LOGW("kincony", "SHT31 Heater status %d\n", CHECK_BIT(stat,13));
-  ESP_LOGW("kincony", "SHT31 Alert pending status %d\n", CHECK_BIT(stat,15));
+  ESP_LOGW("kincony", "SHT31 Checksum status %d", CHECK_BIT(stat,0));
+  ESP_LOGW("kincony", "SHT31 Last command status %d", CHECK_BIT(stat,1));
+  ESP_LOGW("kincony", "SHT31 Reset detected status %d", CHECK_BIT(stat,4));
+  ESP_LOGW("kincony", "SHT31 'T' tracking alert %d", CHECK_BIT(stat,10));
+  ESP_LOGW("kincony", "SHT31 'RH' tracking alert %d", CHECK_BIT(stat,11));
+  ESP_LOGW("kincony", "SHT31 Heater status %d", CHECK_BIT(stat,13));
+  ESP_LOGW("kincony", "SHT31 Alert pending status %d", CHECK_BIT(stat,15));
 }
 
 float calibrateACSensitivity(short voltageSensorId, float actualVoltage, float tolerance) {

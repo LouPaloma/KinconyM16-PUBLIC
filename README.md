@@ -84,7 +84,8 @@ message will be published on the `sensor/power/status` topic.
 		 },
 		 "environment": {
 			"temp": 45.1,
-			"humidity": 60.3
+			"humidity": 60.3,
+			"failureRate": 0.064
 		 }
 	 }
 ```
@@ -541,6 +542,8 @@ The "raw" sensors can be extracted from the MQTT message with the following:
     state_topic: "sensor/power/status"
     value_template: "{{ value_json.environment.temp }}"
     device_class: temperature
+    json_attributes_topic: "sensor/power/status"
+    json_attributes_template: "{{ value_json | tojson }}"
 
   - name: "Power Monitor Humidity"
     state_topic: "sensor/power/status"
@@ -880,7 +883,7 @@ cutouts for all the CT sensors, LCD display and power inputs.  Minor fitting may
 Numberous TODO and fixes remain in this system, but has been built and deployed on a WiFI environment.
 
 Some high priority updates would include:
-- PRIORITY: SHT31 does not read after initial in setup()
+- Resolve SHT31 read issues after initial in setup(): conflict with LCD on I2C bus (task hack in place)
 - Build and test on a wired Ethernet configuration
 - Migration to v3.x platorm
 - Additional input checks, especially around inbound MQTT messages

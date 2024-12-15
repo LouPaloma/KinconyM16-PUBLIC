@@ -43,6 +43,7 @@ float calculateGridPower();
 void saveGridSensors(short mapIndex, short sensorIndex);
 void taskPowerReadings(void *pvParameters);
 void taskStatus(void *pvParameters);
+void taskUpdateDisplay(void *pvParameters);
 void logSHT31BitStatus(uint16_t stat);
 
 float calibrateACSensitivity(short voltageSensorId, float actualVoltage, float tolerance);
