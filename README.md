@@ -557,7 +557,7 @@ With the sensors created, their values will be stored in the recorder system and
 power calculations can then be performed by querying via:
 
 ```shell
-curl "http://localhost:8086/query?db=home_assistant&q=select%20integral%28%22value%22%2C%201h%29%20%2F%201000%20from%20%22W%22%20where%20entity_id%20%3D%20%27power_monitor_grid_wattage%27%20group%20by%20time%281d%29%20fill%28null%29%20order%20by%20desc%20limit%201%0A%20tz%28%27America%2FLos_Angeles%27%29"
+curl "http://localhost:8086/query?db=home_assistant&q=select%20integral%28%22value%22%2C%201h%29%20%2F%20-1000%20from%20%22W%22%20where%20entity_id%20%3D%20%27power_monitor_grid_wattage%27%20group%20by%20time%281d%29%20fill%28null%29%20order%20by%20desc%20limit%201%0A%20tz%28%27America%2FLos_Angeles%27%29"
 ```
 
 which would yield an output like:
